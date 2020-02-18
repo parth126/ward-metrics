@@ -59,12 +59,16 @@ def plot_events_with_event_scores(gt_event_scores, detected_event_scores, ground
     for i in range(len(detected_events)):
         d = detected_events[i]
         plt.axvspan(d[0], d[1], 0, 0.5)
+        plt.axvline(d[1], 0, 0.5, color='k')
         plt.text((d[1] + d[0]) / 2, 0.2, detected_event_scores[i], horizontalalignment='center', verticalalignment='center')
 
     for i in range(len(ground_truth_events)):
         gt = ground_truth_events[i]
         plt.axvspan(gt[0], gt[1], 0.5, 1)
+        plt.axvline(gt[1], 0.5, 1,color='k')
         plt.text((gt[1] + gt[0]) / 2, 0.8, gt_event_scores[i], horizontalalignment='center', verticalalignment='center')
+
+    plt.axhline(0.5, color='k')
 
     plt.tight_layout()
 

@@ -11,7 +11,7 @@ def merge_events_if_necessary(events):
     for index in index_to_remove:
         del events[index]
 
-    return events
+    return Event-based
 
 
 def is_segment_in_interval(segment_start, segment_end, interval_start, interval_end):
@@ -153,6 +153,7 @@ def get_segments_with_standard_error_categories(ground_truth_events, detected_ev
     for index in index_to_remove:
         del segments[index]
 
+    print("segments: ", segments)
     return segments
 
 
@@ -204,7 +205,7 @@ def score_segment(previous_segment, current_segment, next_segment):
                 elif previous_segment[index_of_standard_category] == "TP" and (
                         next_segment[index_of_standard_category] == "TN" or next_segment[index_of_standard_category] == "FP"):
                     current_segment_score = "Ue"
-                    
+
         elif previous_segment is None and next_segment is not None:
             # start case (for the first segment):
             if current_segment[index_of_standard_category] == "FP":
@@ -387,7 +388,8 @@ def compute_event_scores(segments):
     # Get list of events indexes:
     detected_indexes = _get_detected_event_index_list(segments)
     ground_truth_indexes = _get_ground_truth_event_index_list(segments)
-
+    print("DET: ", detected_indexes)
+    print("GT: ", ground_truth_indexes)
     # get score for each gt event:
     gt_event_scores = []
     for i in ground_truth_indexes:
@@ -528,7 +530,9 @@ def eval_segments(ground_truth_events, detected_events, evaluation_start=None, e
         raise AttributeError("Insufficient data. List of ground truth or detected events is empty - calculation not possible.")
 
     ground_truth_events = merge_events_if_necessary(ground_truth_events)
+    print("Updated GT: ", ground_truth_events)
     detected_events = merge_events_if_necessary(detected_events)
+    print("Updated DT: ", detected_events)
 
     segments_with_category = get_segments_with_standard_error_categories(ground_truth_events, detected_events,
                                                                          evaluation_start, evaluation_end)
@@ -571,13 +575,82 @@ def eval_events(ground_truth_events, detected_events, evaluation_start=None, eva
     if len(ground_truth_events) <= 0 or len(detected_events) <= 0:
         raise AttributeError("Insufficient data. List of ground truth or detected events is empty - calculation not possible.")
 
-    ground_truth_events = merge_events_if_necessary(ground_truth_events)
-    detected_events = merge_events_if_necessary(detected_events)
-
+    #ground_truth_events = merge_events_if_necessary(ground_truth_events)
+    print("Updated GT: ", ground_truth_events)
+    #detected_events = merge_events_if_necessary(detected_events)
+    print("Updated DT: ", detected_events)
     segments_with_category = get_segments_with_standard_error_categories(ground_truth_events, detected_events, evaluation_start, evaluation_end)
     segments_with_detailed_categories = compute_detailed_segment_scores(segments_with_category)
 
-    gt_scores, detection_scores, detailed_score_statistics = _get_detailed_event_metrics(segments_with_detailed_categories)
+    gt_scores, detection_scores, detailed_score_statistics = _get_detailed_event_metrics_new(segments_with_detailed_categories, ground_truth_events, detected_events)
+    gt_scores1, detection_scores1, detailed_score_statistics1 = _get_detailed_event_metrics(segments_with_detailed_categories)
     standard_score_statistics = _get_standard_event_metrics(ground_truth_events, detected_events, gt_scores, detection_scores)
 
+    #return (gt_scores, gt_scores1), (detection_scores, detection_scores1), (detailed_score_statistics, detailed_score_statistics1), standard_score_statistics
     return gt_scores, detection_scores, detailed_score_statistics, standard_score_statistics
+
+def _get_detailed_event_metrics_new(segments_with_category, gt_events, det_events):
+    gt_event_scores, det_event_scores = compute_event_scores_new(gt_events, det_events)
+    detailed_event_metrics = _count_event_scores(gt_event_scores, det_event_scores)
+    return gt_event_scores, det_event_scores, detailed_event_metrics
+
+def compute_event_scores_new(gt_events, det_events):
+    gt_category = []
+    for s in gt_events:
+        os_gt = find_overlapping_segments((s[0], s[1]), det_events)
+        print(os_gt)
+        if len(os_gt) == 1 and (os_gt[0][0], os_gt[0][1]) == (s[0], s[1]):
+            gt_temp = ["C"]
+        else:
+            gt_temp = []
+            for s1 in os_gt:
+                if (s1[0] <= s[0]) and (s1[1] >= s[1]): # s1 consumes s
+                    gt_temp += ["M"]
+                elif (s1[0] < s[0]) and (s1[1] < s[1]): # left of s overlaps right of s1
+                    gt_temp += ["FM"]
+                elif (s[0] <= s1[0]) and (s[1] >= s1[1]): # s consumes s1
+                    gt_temp += ["F"]
+                elif (s[0] < s1[0]) and (s[1] < s1[1]): # left of s1 overlaps right of s
+                    gt_temp += ["FM"]
+        print(gt_temp)
+        if len(set(gt_temp)) > 1:
+            gt_category.append("FM")
+        else:
+            gt_category.append(list(set(gt_temp))[0])
+
+    print(gt_category)
+    det_category = []
+    for s in det_events:
+        os_det = find_overlapping_segments((s[0], s[1]), gt_events)
+        print(os_det)
+        if len(os_det) == 1 and (os_det[0][0], os_det[0][1]) == (s[0], s[1]):
+            det_temp = ["C"]
+        else:
+            det_temp = []
+            for s1 in os_det:
+                if (s1[0] <= s[0]) and (s1[1] >= s[1]): # s1 consumes s
+                    det_temp += ["F'"]
+                elif (s1[0] < s[0]) and (s1[1] < s[1]): # left of s overlaps right of s1
+                    det_temp += ["FM'"]
+                elif (s[0] <= s1[0]) and (s[1] >= s1[1]): # s consumes s1
+                    det_temp += ["M'"]
+                elif (s[0] < s1[0]) and (s[1] < s1[1]): # left of s1 overlaps right of s
+                    det_temp += ["FM'"]
+
+        if len(set(det_temp)) > 1:
+            det_category.append("FM'")
+        else:
+            det_category.append(list(set(det_temp))[0])
+
+    return gt_category, det_category
+
+def has_overlap(seg1, seg2):
+    if (seg1[0] < seg2[1] and seg1[1] > seg2[0]) or (seg2[0] < seg1[1] and seg2[1] > seg1[0]):
+        return True
+
+def find_overlapping_segments(segment, all_segments):
+    overlapping_segs = []
+    for s in all_segments:
+        if has_overlap(segment, s):
+            overlapping_segs.append(s)
+    return(overlapping_segs)
