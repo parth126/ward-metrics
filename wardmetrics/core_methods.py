@@ -1,3 +1,5 @@
+import numpy as np
+
 def merge_events_if_necessary(events):
     index_to_remove = []
 
@@ -583,26 +585,29 @@ def eval_events(ground_truth_events, detected_events, evaluation_start=None, eva
     segments_with_detailed_categories = compute_detailed_segment_scores(segments_with_category)
 
     gt_scores, detection_scores, detailed_score_statistics = _get_detailed_event_metrics_new(segments_with_detailed_categories, ground_truth_events, detected_events)
-    gt_scores1, detection_scores1, detailed_score_statistics1 = _get_detailed_event_metrics(segments_with_detailed_categories)
+    #gt_scores1, detection_scores1, detailed_score_statistics1 = _get_detailed_event_metrics(segments_with_detailed_categories)
     standard_score_statistics = _get_standard_event_metrics(ground_truth_events, detected_events, gt_scores, detection_scores)
 
     #return (gt_scores, gt_scores1), (detection_scores, detection_scores1), (detailed_score_statistics, detailed_score_statistics1), standard_score_statistics
     return gt_scores, detection_scores, detailed_score_statistics, standard_score_statistics
 
 def _get_detailed_event_metrics_new(segments_with_category, gt_events, det_events):
-    gt_event_scores, det_event_scores = compute_event_scores_new(gt_events, det_events)
-    detailed_event_metrics = _count_event_scores(gt_event_scores, det_event_scores)
+    gt_event_scores, gt_seg_lengths, det_event_scores, det_seg_lengths = compute_event_scores_smart(gt_events, det_events)
+    detailed_event_metrics = _count_event_scores_new(np.array(gt_event_scores), np.array(gt_seg_lengths), np.array(det_event_scores), np.array(det_seg_lengths))
     return gt_event_scores, det_event_scores, detailed_event_metrics
 
 def compute_event_scores_new(gt_events, det_events):
     gt_category = []
+    gt_lengths = []
     for s in gt_events:
         os_gt = find_overlapping_segments((s[0], s[1]), det_events)
         print(os_gt)
         if len(os_gt) == 1 and (os_gt[0][0], os_gt[0][1]) == (s[0], s[1]):
             gt_temp = ["C"]
+            gt_temp_length = 1
         else:
             gt_temp = []
+            gt_temp_length = s[1] - s[0]
             for s1 in os_gt:
                 if (s1[0] <= s[0]) and (s1[1] >= s[1]): # s1 consumes s
                     gt_temp += ["M"]
@@ -617,16 +622,20 @@ def compute_event_scores_new(gt_events, det_events):
             gt_category.append("FM")
         else:
             gt_category.append(list(set(gt_temp))[0])
+        gt_lengths.append(gt_temp_length)
 
     print(gt_category)
     det_category = []
+    det_lengths = []
     for s in det_events:
         os_det = find_overlapping_segments((s[0], s[1]), gt_events)
         print(os_det)
         if len(os_det) == 1 and (os_det[0][0], os_det[0][1]) == (s[0], s[1]):
             det_temp = ["C"]
+            det_temp_length = 1
         else:
             det_temp = []
+            det_temp_length = s[1]-s[0]
             for s1 in os_det:
                 if (s1[0] <= s[0]) and (s1[1] >= s[1]): # s1 consumes s
                     det_temp += ["F'"]
@@ -641,11 +650,12 @@ def compute_event_scores_new(gt_events, det_events):
             det_category.append("FM'")
         else:
             det_category.append(list(set(det_temp))[0])
+        det_lengths.append(det_temp_length)
 
-    return gt_category, det_category
+    return gt_category, gt_lengths, det_category, det_lengths
 
 def has_overlap(seg1, seg2):
-    if (seg1[0] < seg2[1] and seg1[1] > seg2[0]) or (seg2[0] < seg1[1] and seg2[1] > seg1[0]):
+    if (seg1[0] < seg2[1] and seg1[1] > seg2[0]):
         return True
 
 def find_overlapping_segments(segment, all_segments):
@@ -654,3 +664,180 @@ def find_overlapping_segments(segment, all_segments):
         if has_overlap(segment, s):
             overlapping_segs.append(s)
     return(overlapping_segs)
+
+def _count_event_scores_new(gt_event_scores, gt_seg_lengths, detection_scores, det_seg_lengths):
+    print("GT: ", gt_seg_lengths, gt_event_scores)
+    print("GT: ", det_seg_lengths, detection_scores)
+    results = {
+        "total_gt": sum(gt_seg_lengths),
+        "total_det": sum(det_seg_lengths),
+        "D": sum(gt_seg_lengths[gt_event_scores == "D"]),
+        "F": sum(gt_seg_lengths[gt_event_scores == "F"]),
+        "FM": sum(gt_seg_lengths[gt_event_scores == "FM"]),
+        "M": sum(gt_seg_lengths[gt_event_scores == "M"]),
+        "C": sum(gt_seg_lengths[gt_event_scores == "C"]),
+        "M'": sum(det_seg_lengths[detection_scores == "M'"]),
+        "FM'": sum(det_seg_lengths[detection_scores == "FM'"]),
+        "F'": sum(det_seg_lengths[detection_scores == "F'"]),
+        "I'": sum(det_seg_lengths[detection_scores == "I'"])
+    }
+    print("RRR: ", results)
+    return results
+
+
+def create_adjacency_matrix(gt_event_dict, det_event_dict):
+
+    adjacency_matix = np.zeros([len(gt_event_dict), len(det_event_dict)])
+
+    for gt_event in gt_event_dict:
+
+        gt_event_id = gt_event_dict[gt_event]
+        overlapping_segments = find_overlapping_segments((gt_event[0], gt_event[1]), det_event_dict.keys())
+
+        for os in overlapping_segments:
+            det_event_id = det_event_dict[os]
+            adjacency_matix[gt_event_id, det_event_id] = min(os[1], gt_event[1]) - max(os[0], gt_event[0])
+
+    return adjacency_matix
+
+def compute_event_scores_smart(gt_events, det_events):
+
+    gt_event_dict = {}
+    det_event_dict = {}
+    gt_event_inv_dict = {}
+    det_event_inv_dict = {}
+
+    for g_ev in gt_events:
+        gt_event_dict[g_ev] = len(gt_event_dict)
+        gt_event_inv_dict[len(gt_event_dict) - 1] = g_ev
+
+    for d_ev in det_events:
+        det_event_dict[d_ev] = len(det_event_dict)
+        det_event_inv_dict[len(det_event_dict) - 1] = d_ev
+
+    adjacency_matix = create_adjacency_matrix(gt_event_dict, det_event_dict)
+
+    valid_paths = getValidPathsLatest(adjacency_matix)
+
+    best_alignment = get_best_alignment(valid_paths)
+    print("Best: ", best_alignment, len(gt_event_dict))
+    complete_alignment = fill_missing(best_alignment, len(gt_event_dict))
+    print(complete_alignment)
+    gt_category = []
+    gt_lengths = []
+
+    det_category = []
+    det_lengths = []
+
+    for segment in complete_alignment:
+        if segment[1] == -1:
+            gt_category.append("D")
+            g_ev = gt_event_inv_dict[segment[0]]
+            gt_lengths.append(g_ev[1]-g_ev[0])
+
+        elif segment[0] == -1:
+            det_category.append("I")
+            g_ev = gt_event_inv_dict[segment[1]]
+            det_lengths.append(d_ev[1] - d_ev[0])
+
+        else:
+            print(segment)
+            g_ev = gt_event_inv_dict[segment[0]]
+            d_ev = det_event_inv_dict[segment[1]]
+            gt_lengths.append(g_ev[1]-g_ev[0])
+            det_lengths.append(d_ev[1] - d_ev[0])
+            if g_ev == d_ev:
+                gt_category.append("C")
+                det_category.append("C")
+            elif (g_ev[0] <= d_ev[0]) and (g_ev[1] >= d_ev[1]):
+                gt_category.append("F")
+                det_category.append("F'")
+            elif (d_ev[0] <= g_ev[0]) and (d_ev[1] >= g_ev[1]):
+                gt_category.append("M")
+                det_category.append("M'")
+            else:
+                print("FM: ", g_ev, d_ev)
+                gt_category.append("FM")
+                det_category.append("FM'")
+
+    return gt_category, gt_lengths, det_category, det_lengths
+
+
+def getValidPathsLatest(n, xshift = 0, yshift = 0):
+    valid_paths = []
+    if n.shape[1] == 1:
+        for i in range(0,n.shape[0]):
+            if n[i,0] > 0:
+                valid_paths.append([(xshift+i, yshift, n[i,0])])
+        valid_paths.append((-1, yshift, 0))
+        return valid_paths
+
+    new_path = [(-1, yshift, 0)]
+    for p in getValidPathsLatest(n[:, 1:], xshift=xshift, yshift=yshift+1):
+        if p:
+            new_path.append(p)
+    valid_paths.append(new_path)
+
+    for i in range(0,n.shape[0]):
+        if n[i,0] > 0:
+            new_path = [(xshift+i, yshift, n[i,0])]
+            for p in getValidPathsLatest(n[i+1:, 1:], xshift=xshift+i+1, yshift=yshift+1):
+                if p:
+                    new_path.append(p)
+            valid_paths.append(new_path)
+    return valid_paths
+
+
+def flattenPathTree(g): # g == paths from a specific starting point
+    flattened_paths = []
+    if not isinstance(g, list):
+        return [[g]]
+    elif len(g) == 1:
+        return([g])
+    else:
+        for i in range(1,len(g)):
+            for p in flattenPathTree(g[i]):
+                fp = [g[0]]
+                fp += p
+                flattened_paths.append(fp)
+        return flattened_paths
+
+
+def get_best_alignment(valid_paths):
+    all_paths = []
+    for i in range(0,len(valid_paths)):
+        all_paths += flattenPathTree(valid_paths[i])
+    max_score = 0.0
+    for a in all_paths:
+        if sum([x[2] for x in a]) > max_score:
+            max_score = sum([x[2] for x in a])
+            best_alignment = a
+
+    return best_alignment
+
+def fill_missing(path, max_x):
+    missing_x = [x for x in range(0,max_x)]
+    for p in path:
+        if p[0] != -1:
+            #print(missing_x)
+            missing_x.remove(p[0])
+    new_path = []
+    current_missing = 0
+    next_valid = 0
+    while len(new_path) < len(path) + len(missing_x):
+        if next_valid < len(path):
+            p = path[next_valid]
+
+            if (current_missing < len(missing_x)) and (p[0] > missing_x[current_missing]):
+                new_path.append((missing_x[current_missing],-1,0))
+                current_missing += 1
+            else:
+                new_path.append(p)
+                next_valid += 1
+
+        else:
+            new_path.append((missing_x[current_missing],-1,0))
+            current_missing += 1
+
+    return new_path
+
